@@ -66,6 +66,7 @@ dev() {
     # First pass: collect all worktree info and extract issue numbers
     local -a worktrees=()
     local -a issue_nums=()
+    local -a branches=()
 
     while read -r line; do
       # 提取路径
@@ -103,7 +104,7 @@ dev() {
       if [[ $has_changes == true ]]; then
         branch_display="$branch_display*"
       fi
-      # Add arrows for ahead/behind - only for non-main branches
+      # Calculate ahead - only for non-main branches
       local ahead=0
       local behind=0
       if [[ -n "$branch" && "$branch" != "$main_branch" ]]; then
@@ -112,7 +113,6 @@ dev() {
           behind=$(git rev-list --count "$branch..$main_branch")
           ahead=$(git rev-list --count "$main_branch..$branch")
         fi
-        branch_display="$branch_display ↑$ahead ↓$behind"
       fi
 
       # Extract issue number from branch:
@@ -123,22 +123,29 @@ dev() {
       if [[ "$branch" =~ ^([0-9]+)- ]]; then
         issue_num="${BASH_REMATCH[1]}"
         issue_nums+=("$issue_num")
+        branches+=("$branch")
       elif [[ "$branch" =~ ^issue-([0-9]+)$ ]]; then
         issue_num="${BASH_REMATCH[1]}"
         issue_nums+=("$issue_num")
+        branches+=("$branch")
       elif [[ "$branch" =~ ^[0-9]+$ ]]; then
         issue_num="$branch"
         issue_nums+=("$issue_num")
+        branches+=("$branch")
       fi
 
       # Store worktree data for second pass
-      worktrees+=("$short_path|$branch_display|$issue_num")
+      worktrees+=("$short_path|$branch_display|$issue_num|$branch|$ahead")
     done < <(git worktree list)
 
     # If we found issue branches, fetch all issue titles in one API call
     # Use temp file for mapping since bash 3.2 doesn't support associative arrays
     local issue_map_file
     issue_map_file=$(mktemp)
+    # Temp file for PR info
+    local pr_map_file
+    pr_map_file=$(mktemp)
+    
     if [[ ${#issue_nums[@]} -gt 0 ]]; then
       # Fetch all project items once - reuse the same pattern as issue list
       local project_data
@@ -153,12 +160,25 @@ dev() {
         ' > "$issue_map_file"
       fi
     fi
+    
+    # Fetch PR info for all branches with issue numbers
+    if [[ ${#branches[@]} -gt 0 ]]; then
+      # Fetch all PRs in one go
+      local pr_data
+      pr_data=$(run gh pr list --repo "$GH_REPO" --state all --json number,headRefName,state,url)
+      if [[ $? -eq 0 ]]; then
+        # Extract PR info mapped by branch name
+        echo "$pr_data" | jq -r '
+          .[] | "\(.headRefName)\t\(.number)\t\(.state)\t\(.url)"
+        ' > "$pr_map_file"
+      fi
+    fi
 
     # Second pass: build JSON with issue information
     local json="["
     local first=true
     for wt in "${worktrees[@]}"; do
-      IFS='|' read -r short_path branch_display issue_num <<< "$wt"
+      IFS='|' read -r short_path branch_display issue_num branch ahead <<< "$wt"
       local issue_status="-"
       local issue_title=""
       if [[ -n "$issue_num" && -s "$issue_map_file" ]]; then
@@ -166,31 +186,75 @@ dev() {
         issue_status=$(grep "^$issue_num"$'\t' "$issue_map_file" | cut -f2)
         issue_title=$(grep "^$issue_num"$'\t' "$issue_map_file" | cut -f3)
       fi
+      
+      # PR information
+      local pr_num="-"
+      local pr_state="-"
+      local pr_url="-"
+      if [[ -n "$branch" && -s "$pr_map_file" ]]; then
+        # Lookup PR info by branch name
+        # Use || true to avoid error when grep finds nothing
+        local pr_line=$(grep "^$branch"$'\t' "$pr_map_file" | head -1 || true)
+        if [[ -n "$pr_line" ]]; then
+          pr_num=$(echo "$pr_line" | cut -f2)
+          pr_state=$(echo "$pr_line" | cut -f3)
+          pr_url=$(echo "$pr_line" | cut -f4)
+        fi
+      fi
 
+      # 处理内容中的特殊字符，替换掉换行符
+      issue_title="${issue_title//$'\n'/ }"
+      
       if [ "$first" = true ]; then
         first=false
       else
         json="$json,"
       fi
-      json="$json{\"path\":\"$short_path\",\"branch_display\":\"$branch_display\",\"issue_num\":\"$issue_num\",\"issue_status\":\"$issue_status\",\"issue_title\":\"$issue_title\"}"
+      json="$json{\"path\":\"$short_path\",\"branch_display\":\"$branch_display\",\"ahead\":$ahead,\"issue_num\":\"$issue_num\",\"issue_status\":\"$issue_status\",\"pr_num\":\"$pr_num\",\"pr_state\":\"$pr_state\",\"issue_title\":\"$issue_title\"}"
     done
 
-    # Cleanup temp file
+    # Cleanup temp files
     rm -f "$issue_map_file"
+    rm -f "$pr_map_file"
 
     json="$json]"
 
-    # 使用jq格式化为表格，然后column自动对齐
-    echo "$json" | jq -r '
-      ["Path", "Branch", "Issue"],
-      ["----", "------", "-----"],
-      (.[] | [
-        .path,
-        .branch_display,
-        (if .issue_num != "" then "#\(.issue_num) \(.issue_status): \(.issue_title)" else "-" end)
-      ])
-      | @tsv
-    ' | COLUMNS=1000 column -t -s $'\t'
+    # 先输出标题
+    printf "${primary}%-20s %-18s %-8s %-6s %-12s %s${reset}\n" "Path" "Branch" "Ahead" "PR" "PR State" "Project Status"
+    printf "${primary}%-20s %-18s %-8s %-6s %-12s %s${reset}\n" "----" "------" "-----" "--" "--------" "--------------"
+    
+    # 逐行处理并上色
+    echo "$json" | jq -c '.[]' | while read -r item; do
+      local path=$(echo "$item" | jq -r '.path')
+      local branch_display=$(echo "$item" | jq -r '.branch_display')
+      local ahead=$(echo "$item" | jq -r '.ahead')
+      local pr_num=$(echo "$item" | jq -r '.pr_num')
+      local pr_state=$(echo "$item" | jq -r '.pr_state')
+      local issue_status=$(echo "$item" | jq -r '.issue_status')
+      
+      # 格式化PR
+      local pr="$pr_num"
+      if [[ "$pr_num" != "-" ]]; then
+        pr="#$pr_num"
+      fi
+      
+       # 特殊处理颜色，保证对齐（转义字符不占可见宽度）
+      local ahead_start=""
+      local ahead_end=""
+      if [[ "$ahead" -gt 0 ]]; then
+        ahead_start="$warning"
+        ahead_end="$reset"
+      fi
+      
+      local pr_start=""
+      local pr_end=""
+      if [[ "$pr_state" == "OPEN" ]]; then
+        pr_start="$warning"
+        pr_end="$reset"
+      fi
+      
+      printf "%-20s %-18s ${ahead_start}%-8d${ahead_end} %-6s ${pr_start}%-12s${pr_end} %s\n" "$path" "$branch_display" "$ahead" "$pr" "$pr_state" "$issue_status"
+    done
   }
 
   # 提交 PR
@@ -243,14 +307,14 @@ dev() {
        exit 1
     fi
 
-    # Check if PR already exists
-    local existing_pr
-    existing_pr=$(run gh pr list --repo "$GH_REPO" --head "$branch" --json number -q ".[0].number")
-    if [[ -n "$existing_pr" ]]; then
-       echo "${success}success: PR #$existing_pr already exists${reset}"
-    else
-       run gh pr create --repo "$GH_REPO" --base "$main_branch" --head "$branch" --title "$issue_title" --body "Complete #$issue_num"
-    fi
+     # Check if open PR already exists (only check open PRs, allow new PR if existing is merged/closed)
+     local existing_pr
+     existing_pr=$(run gh pr list --repo "$GH_REPO" --head "$branch" --state open --json number -q ".[0].number")
+     if [[ -n "$existing_pr" ]]; then
+        echo "${success}success: Open PR #$existing_pr already exists${reset}"
+     else
+        run gh pr create --repo "$GH_REPO" --base "$main_branch" --head "$branch" --title "$issue_title" --body "Complete #$issue_num"
+     fi
 
     # project workflow auto Update Project Status to "In review"
     # https://github.com/users/chen56/projects/13/workflows/86523095
@@ -279,27 +343,31 @@ dev() {
     echo "  Repository:     $GH_REPO"
     echo "  Root directory: $repo_root"
 
-    # Check uncommitted changes
-    local has_changes=false
-    local status_out=$(git status --porcelain)
-    if [[ -n "$status_out" ]]; then
-      has_changes=true
-      local change_count=$(echo "$status_out" | wc -l)
-      echo "  Changes:        $change_count uncommitted file(s)"
-    else
-      echo "  Changes:        Clean working directory"
-    fi
+     # Check uncommitted changes
+     local has_changes=false
+     local status_out=$(git status --porcelain)
+     if [[ -n "$status_out" ]]; then
+       has_changes=true
+       local change_count=$(echo "$status_out" | wc -l)
+       echo "  Changes:        ${warning}$change_count uncommitted file(s)${reset}"
+     else
+       echo "  Changes:        Clean working directory"
+     fi
 
-    # Ahead/behind tracking
-    local ahead=0
-    local behind=0
-    if [[ "$branch" != "$main_branch" ]]; then
-      if git rev-parse --verify "$main_branch" >/dev/null 2>&1 && git rev-parse --verify "$branch@{upstream}" >/dev/null 2>&1; then
-        ahead=$(git rev-list --count "$main_branch..$branch")
-        behind=$(git rev-list --count "$branch@{upstream}..$main_branch")
-        echo "  Tracking:       ↑$ahead ahead, ↓$behind behind $main_branch"
-      fi
-    fi
+     # Ahead/behind tracking
+     local ahead=0
+     local behind=0
+     if [[ "$branch" != "$main_branch" ]]; then
+       if git rev-parse --verify "$main_branch" >/dev/null 2>&1 && git rev-parse --verify "$branch@{upstream}" >/dev/null 2>&1; then
+         ahead=$(git rev-list --count "$main_branch..$branch")
+         behind=$(git rev-list --count "$branch@{upstream}..$main_branch")
+         if [[ "$ahead" -gt 0 ]]; then
+           echo "  Tracking:       ${warning}↑$ahead ahead, ↓$behind behind $main_branch${reset}"
+         else
+           echo "  Tracking:       ↑$ahead ahead, ↓$behind behind $main_branch"
+         fi
+       fi
+     fi
 
     if [[ -z "$issue_num" ]]; then
       echo
@@ -321,10 +389,14 @@ dev() {
       local author=$(echo "$issue_info" | jq -r '.author.login')
       local labels=$(echo "$issue_info" | jq -r '[.labels[].name] | join(", ")')
 
-      echo "  Title:          $title"
-      echo "  State:          $state"
-      echo "  Author:         $author"
-      echo "  URL:            $url"
+       echo "  Title:          $title"
+       if [[ "$state" == "OPEN" ]]; then
+         echo "  State:          ${warning}${state}${reset}"
+       else
+         echo "  State:          $state"
+       fi
+       echo "  Author:         $author"
+       echo "  URL:            $url"
       if [[ -n "$labels" && "$labels" != "[]" && "$labels" != "" ]]; then
         echo "  Labels:         $labels"
       fi
@@ -338,13 +410,18 @@ dev() {
     local project_info
     project_info=$(run gh project item-list "$GH_PROJECT_NUM" --owner "$GH_OWNER" --format json 2>/dev/null)
     if [[ $? -eq 0 && -n "$project_info" ]]; then
-      local status=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .status // \"-\"")
-      local priority=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .priority // \"-\"")
-      local module=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .module // \"-\"")
+       local status=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .status // \"-\"")
+       local priority=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .priority // \"-\"")
+       local module=$(echo "$project_info" | jq -r "(if type == \"object\" and .items then .items else . end)[] | select(.content != null and .content.number == $issue_num) | .module // \"-\"")
 
-      echo "  Status:         $status"
-      echo "  Priority:       $priority"
-      echo "  Module:         $module"
+       # 进行中的状态加warning颜色
+       if [[ "$status" =~ ^(In progress|In review)$ ]]; then
+         echo "  Status:         ${warning}$status${reset}"
+       else
+         echo "  Status:         $status"
+       fi
+       echo "  Priority:       $priority"
+       echo "  Module:         $module"
     fi
 
     echo
@@ -363,11 +440,15 @@ dev() {
         local pr_url=$(echo "$first_pr" | jq -r '.url')
         local mergeable=$(echo "$first_pr" | jq -r '.mergeable')
 
-        echo "  PR #:            #$pr_num"
-        echo "  Title:          $pr_title"
-        echo "  State:          $pr_state"
-        echo "  Mergeable:      $mergeable"
-        echo "  URL:            $pr_url"
+         echo "  PR #:            #$pr_num"
+         echo "  Title:          $pr_title"
+         if [[ "$pr_state" == "OPEN" ]]; then
+           echo "  State:          ${warning}${pr_state}${reset}"
+         else
+           echo "  State:          $pr_state"
+         fi
+         echo "  Mergeable:      $mergeable"
+         echo "  URL:            $pr_url"
       else
         echo "  No open PR found for branch '$branch'"
       fi
