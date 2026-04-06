@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 
 # Command appears to be unreachable. Check usage (or ignore if invoked indirectly).
+# shellcheck disable=SC2329 # This function is never invoked. Check usage (or ignored if invoked indirectly).shellcheckSC2329
 # shellcheck disable=SC2317
-
+# shellcheck disable=SC2034 #secondary appears unused. Verify use (or export if used externally).shellcheckSC2034
 set -o errtrace  # -E trap inherited in sub script
 set -o errexit   # -e
 set -o functrace # -T If set, any trap on DEBUG and RETURN are inherited by shell functions
@@ -15,22 +16,9 @@ shopt -s extglob
 
 # Get the real path of the script directory
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$ROOT_DIR/sha_common.sh"
+cd "$ROOT_DIR"
+source "./sha_common.sh"
 
-# 顶层合成色直接可用
-primary="${m3_on_primary}${m3_primary}"
-secondary="${m3_on_secondary}${m3_secondary}"
-tertiary="${m3_on_tertiary}${m3_tertiary}"
-success="${m3_on_success}${m3_success}"
-error="${m3_on_error}${m3_error}"
-warning="${m3_on_warning}${m3_warning}"
-info="${m3_on_info}${m3_info}"
-surface="${m3_on_surface}${m3_surface}"
-surface_container="${m3_on_surface_container}${m3_surface_container}"
-surface_variant="${m3_on_surface_variant}${m3_surface_variant}"
-inverse_surface="${m3_on_inverse_surface}${m3_inverse_surface}"
-outline="${m3_outline}"
-reset="\033[0m"
 
 ####################################################################################
 # GitHub Project 工作流配置
@@ -193,7 +181,6 @@ dev() {
     json="$json]"
 
     # 使用jq格式化为表格，然后column自动对齐
-    printf "${primary}"
     echo "$json" | jq -r '
       ["Path", "Branch", "Issue"],
       ["----", "------", "-----"],
@@ -204,7 +191,6 @@ dev() {
       ])
       | @tsv
     ' | COLUMNS=1000 column -t -s $'\t'
-    printf "${reset}"
   }
 
   # 提交 PR
