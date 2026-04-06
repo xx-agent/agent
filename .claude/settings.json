@@ -1,0 +1,8 @@
+{
+  "skills": {
+    "dao-tdd-dev": {
+      "enabled": true,
+      "description": "Autonomous test-driven development assistant"
+    }
+  }
+}
