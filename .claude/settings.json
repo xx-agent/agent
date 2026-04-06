@@ -3,6 +3,10 @@
     "dao-tdd-dev": {
       "enabled": true,
       "description": "Autonomous test-driven development assistant"
+    },
+    "dao-review": {
+      "enabled": true,
+      "description": "Four-Role Parallel Code Review Assistant"
     }
   }
 }
