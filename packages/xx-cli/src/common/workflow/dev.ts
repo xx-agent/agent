@@ -1,3 +1,4 @@
+import { UserError } from "./errors.js";
 import { ghIssueView, ghPrList, ghPrCreate, ghPrMerge, ghRepoMergeMethod } from "./github.js";
 import {
   gitWorktreeList, gitWorktreeRemove, gitBranchDeleteForce, gitCheckout, gitPull, gitPush,
@@ -188,24 +189,24 @@ export class DevWorkflow {
     const mainBranch = getMainBranch();
 
     if (branch === mainBranch) {
-      throw new Error("不能在主分支创建 PR");
+      throw new UserError("不能在主分支创建 PR");
     }
 
     // 检查未提交变更
     const statusOut = run("git status --porcelain");
     if (statusOut.trim()) {
-      throw new Error("有未提交的变更，请先提交再创建 PR");
+      throw new UserError("有未提交的变更，请先提交再创建 PR");
     }
 
     const issueNum = parseIssueNumber(branch);
     if (!issueNum) {
-      throw new Error(`无法从分支 "${branch}" 解析 issue 编号`);
+      throw new UserError(`无法从分支 "${branch}" 解析 issue 编号`);
     }
 
     // 获取 issue 标题作为 PR 标题
     const issue = ghIssueView(issueNum, this.repo, "title");
     if (!issue?.title) {
-      throw new Error(`找不到 issue #${issueNum}`);
+      throw new UserError(`找不到 issue #${issueNum}`);
     }
 
     // 检查是否已有 open PR
@@ -229,12 +230,12 @@ export class DevWorkflow {
     const mainBranch = getMainBranch();
 
     if (branch === mainBranch) {
-      throw new Error("请在 worktree 分支执行，不能在主分支");
+      throw new UserError("请在 worktree 分支执行，不能在主分支");
     }
 
     const prs = ghPrList(this.repo, branch, "open");
     if (prs.length === 0) {
-      throw new Error(`分支 "${branch}" 没有 open PR`);
+      throw new UserError(`分支 "${branch}" 没有 open PR`);
     }
 
     const prNum = prs[0].number;
@@ -255,7 +256,7 @@ export class DevWorkflow {
     // 预检 mergeable 状态
     const prDetail = ghPrList(this.repo, branch, "open");
     if (prDetail.length > 0 && prDetail[0].mergeable === "CONFLICTING") {
-      throw new Error(`PR #${prNum} 有冲突，请在 Web 页面解决`);
+      throw new UserError(`PR #${prNum} 有冲突，请在 Web 页面解决`);
     }
 
     ghPrMerge(prNum, this.repo, method);
@@ -268,7 +269,7 @@ export class DevWorkflow {
     const mainBranch = getMainBranch();
 
     if (branch === mainBranch) {
-      throw new Error("请在 worktree 分支执行，不能在主分支");
+      throw new UserError("请在 worktree 分支执行，不能在主分支");
     }
 
     // 预检
@@ -279,7 +280,7 @@ export class DevWorkflow {
       const upstream = run("git rev-parse --abbrev-ref '@{upstream}'");
       const ahead = Number(run(`git rev-list --count "${upstream}..${branch}"`).trim());
       if (ahead > 0) {
-        throw new Error(`有 ${ahead} 个未推送的 commit，请先推送`);
+        throw new UserError(`有 ${ahead} 个未推送的 commit，请先推送`);
       }
     } catch (err: any) {
       if (err.message?.includes("未推送")) throw err;
@@ -294,7 +295,7 @@ export class DevWorkflow {
     // 检查是否有 open PR
     const prs = ghPrList(this.repo, branch, "open");
     if (prs.length > 0) {
-      throw new Error(`存在 open PR #${prs[0].number}，请先合并或关闭`);
+      throw new UserError(`存在 open PR #${prs[0].number}，请先合并或关闭`);
     }
 
     console.log("预检通过，开始删除...");
