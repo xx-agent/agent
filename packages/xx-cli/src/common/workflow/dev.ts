@@ -252,6 +252,11 @@ export class DevWorkflow {
 
     const prNum = prs[0].number;
 
+    // 预检 mergeable 状态（在 TUI 之前，避免用户白选）
+    if (prs[0].mergeable === "CONFLICTING") {
+      throw new UserError(`PR #${prNum} 有冲突，请先解决冲突`);
+    }
+
     // 交互模式：如果没指定 method，TUI 选择
     if (!method) {
       const availableMethods = ghRepoMergeMethod(this.repo);
@@ -266,12 +271,6 @@ export class DevWorkflow {
         }
         method = selected;
       }
-    }
-
-    // 预检 mergeable 状态
-    const prDetail = ghPrList(this.repo, branch, "open");
-    if (prDetail.length > 0 && prDetail[0].mergeable === "CONFLICTING") {
-      throw new UserError(`PR #${prNum} 有冲突，请在 Web 页面解决`);
     }
 
     ghPrMerge(prNum, this.repo, method);
