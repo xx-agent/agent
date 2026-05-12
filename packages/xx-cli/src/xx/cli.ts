@@ -4,6 +4,7 @@ import { XXEvolver, printStatus } from "./evolve.js";
 import { mainPredict } from "./main.js";
 import { syncDependencies } from "../common/sync.js";
 import { logger } from "../common/logger.js";
+import { workflowCli } from "../common/workflow/workflow-cli.js";
 
 const program = new Command();
 program.name("xx-cli").description("xx 统一入口：默认执行 evolve，可用子命令切换");
@@ -51,5 +52,7 @@ program
 
 
 
+
+program.addCommand(workflowCli());
 
 program.parseAsync(process.argv);
