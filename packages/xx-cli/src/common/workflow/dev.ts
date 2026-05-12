@@ -5,6 +5,25 @@ import {
 import { parseIssueNumber, getCurrentBranch, getMainBranch, run } from "./helpers.js";
 import type { WorktreeRow, PRInfo, IssueInfo } from "./types.js";
 import { logger } from "../logger.js";
+import { Markdown, type MarkdownTheme } from "@mariozechner/pi-tui";
+
+/** CLI 场景用纯文本主题，不依赖 initTheme() */
+const plainTheme: MarkdownTheme = {
+  heading:         (s) => s,
+  link:            (s) => s,
+  linkUrl:         (s) => s,
+  code:            (s) => s,
+  codeBlock:       (s) => s,
+  codeBlockBorder: (s) => s,
+  quote:           (s) => s,
+  quoteBorder:     (s) => s,
+  hr:              (s) => s,
+  listBullet:      (s) => s,
+  bold:            (s) => s,
+  italic:          (s) => s,
+  strikethrough:   (s) => s,
+  underline:       (s) => s,
+};
 
 const log = logger.withTag("dev");
 
@@ -57,27 +76,41 @@ export class DevWorkflow {
       });
     }
 
-    // 表格输出
+    // Markdown 表格输出
     if (rows.length === 0) {
       log.info("没有 worktree");
       return rows;
     }
 
-    console.log("Path              Branch            Ahead  PR       PR State  Issue State  Title");
-    console.log("----              ------            -----  --       --------  -----------  -----");
-    for (const row of rows) {
-      const wt = row.worktree;
-      const path = (wt.isPrunable ? wt.shortPath + " **prunable**" : wt.shortPath).padEnd(16).slice(0, 16);
-      const branchCol = wt.branchDisplay.padEnd(16).slice(0, 16);
-      const ahead = String(wt.ahead).padStart(5);
-      const prNum = row.pr ? `#${row.pr.number}`.padEnd(7) : "-".padEnd(7);
-      const prState = (row.pr?.state ?? "-").padEnd(8);
-      const issueState = (row.issue?.state ?? "-").padEnd(11);
-      const title = (row.issue?.title ?? "-").slice(0, 60);
-      console.log(`${path} ${branchCol} ${ahead} ${prNum} ${prState} ${issueState} ${title}`);
+    const termWidth = process.stdout.columns ?? 120;
+    const md = new Markdown(this.buildTableMarkdown(rows), 0, 0, plainTheme);
+    for (const line of md.render(termWidth)) {
+      console.log(line);
     }
 
     return rows;
+  }
+
+  /** 构建 Markdown 表格字符串 */
+  private buildTableMarkdown(rows: WorktreeRow[]): string {
+    const header = ["Path", "Branch", "Ahead", "PR", "PR State", "Mergeable", "Issue State", "Title"];
+    const sep    = header.map(() => "---");
+    const body = rows.map((row) => {
+      const wt = row.worktree;
+      return [
+        wt.isPrunable ? `\`${wt.shortPath}\` *prunable*` : wt.shortPath,
+        wt.branchDisplay,
+        String(wt.ahead),
+        row.pr ? `#${row.pr.number}` : "-",
+        row.pr?.state ?? "-",
+        row.pr?.mergeable ?? "-",
+        row.issue?.state ?? "-",
+        (row.issue?.title ?? "-").replace(/\|/g, "\\|"),
+      ];
+    });
+
+    const toRow = (cells: string[]) => `| ${cells.join(" | ")} |`;
+    return [toRow(header), toRow(sep), ...body.map(toRow)].join("\n");
   }
 
   /** 当前分支详情（Git + Issue + PR） */

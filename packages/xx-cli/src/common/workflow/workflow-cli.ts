@@ -1,14 +1,28 @@
 import { Command } from "commander";
 import { createWorkflow } from "./index.js";
 
+/**
+ * 给有子命令的 Command 设置无匹配时打印 help 并以 0 退出，
+ * 防止 bash 因非 0 退出码误判为错误。
+ */
+function showHelpOnNoSubcommand(cmd: InstanceType<typeof Command>) {
+  cmd.exitOverride();
+  cmd.action(() => {
+    cmd.outputHelp();
+    process.exit(0);
+  });
+}
+
 export function workflowCli() {
   const wf = createWorkflow();
 
   const cmd = new Command("workflow")
     .description("GitHub 开发工作流管理");
+  showHelpOnNoSubcommand(cmd);
 
   // issue 子命令
   const issueCmd = new Command("issue").description("issue 管理");
+  showHelpOnNoSubcommand(issueCmd);
 
   issueCmd
     .command("new <description...>")
@@ -36,6 +50,7 @@ export function workflowCli() {
 
   // dev 子命令
   const devCmd = new Command("dev").description("开发环境管理");
+  showHelpOnNoSubcommand(devCmd);
 
   devCmd
     .command("list")
@@ -66,7 +81,6 @@ export function workflowCli() {
     .command("merge-pr")
     .description("合并当前分支的 PR")
     .option("--method <method>", "合并策略: merge | squash | rebase")
-    .option("--non-interactive", "非交互模式（跳过选择器）")
     .action(async (opts: any) => {
       await wf.dev.mergePr(opts.method);
     });
