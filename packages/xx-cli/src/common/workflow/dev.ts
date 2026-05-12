@@ -257,7 +257,7 @@ export class DevWorkflow {
       throw new UserError(`PR #${prNum} 有冲突，请先解决冲突`);
     }
 
-    // 交互模式：如果没指定 method，TUI 选择
+    // 交互模式：如果没指定 method，显示选择器 TUI
     if (!method) {
       const availableMethods = ghRepoMergeMethod(this.repo);
       const methods = availableMethods.split(",");
