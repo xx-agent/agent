@@ -224,7 +224,10 @@ export class DevWorkflow {
     // 检查是否已有 open PR
     const existing = ghPrList(this.repo, branch, "open");
     if (existing.length > 0) {
-      log.success(`成功: 已存在 open PR #${existing[0].number}`);
+      // 推送新的 commit 到已有 PR
+      gitPush();
+      log.warn(`分支 "${branch}" 已存在 open PR #${existing[0].number}，新 commit 已推送`);
+      log.info(`合并方式: workflow dev merge-pr 或到 ${existing[0].url} 页面手动合并`);
       return;
     }
 
@@ -254,7 +257,22 @@ export class DevWorkflow {
 
     // 预检 mergeable 状态（在 TUI 之前，避免用户白选）
     if (prs[0].mergeable === "CONFLICTING") {
-      throw new UserError(`PR #${prNum} 有冲突，请先解决冲突`);
+      const prUrl = prs[0].url;
+      throw new UserError(
+        `PR #${prNum} 与 ${mainBranch} 有冲突，请先解决冲突\n` +
+        `\n` +
+        `  页面操作: ${prUrl}\n` +
+        `\n` +
+        `  手工命令:\n` +
+        `    git fetch origin\n` +
+        `    git rebase origin/${mainBranch}\n` +
+        `    # 解决冲突后:\n` +
+        `    git add .\n` +
+        `    git rebase --continue\n` +
+        `    git push --force-with-lease\n` +
+        `\n` +
+        `  解决后重新执行: workflow dev merge-pr`
+      );
     }
 
     // 交互模式：如果没指定 method，显示选择器 TUI
